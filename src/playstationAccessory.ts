@@ -165,16 +165,24 @@ export class PlaystationAccessory {
     return device;
   }
 
-  private notifyCharacteristicsUpdate() {
-    // an unreachable console shows as "Not responding" in the Home app
-    // rather than "Off"
-    this.tvService
-      .getCharacteristic(this.platform.Characteristic.Active)
-      .updateValue(
-        this.reachable === false
-          ? this.communicationFailure()
-          : this.deviceInformation.status === DeviceStatus.AWAKE
-      );
+  private notifyCharacteristicsUpdate(recovered = false) {
+    const active = this.tvService.getCharacteristic(
+      this.platform.Characteristic.Active
+    );
+    const isAwake = this.deviceInformation.status === DeviceStatus.AWAKE;
+
+    if (this.reachable === false) {
+      // an unreachable console shows as "Not responding" in the Home app
+      // rather than "Off". HAP cannot push errors, so the Home app shows it
+      // the next time it reads the value
+      active.updateValue(this.communicationFailure());
+    } else if (recovered) {
+      // HAP only sends an event when the value changed, and without one the
+      // Home app keeps showing "Not responding"
+      active.sendEventNotification(isAwake);
+    } else {
+      active.updateValue(isAwake);
+    }
 
     const runningAppTitle = this.titleIDs.indexOf(
       this.deviceInformation.extras["running-app-titleid"] || 0
@@ -194,9 +202,11 @@ export class PlaystationAccessory {
     }
 
     this.pollInFlight = true;
+    let recovered = false;
 
     try {
       await this.discoverDevice();
+      recovered = this.reachable === false;
       this.setReachable(true);
     } catch (err) {
       this.setReachable(false, err as Error);
@@ -204,7 +214,7 @@ export class PlaystationAccessory {
       this.deviceInformation.status = DeviceStatus.STANDBY;
     } finally {
       this.pollInFlight = false;
-      this.notifyCharacteristicsUpdate();
+      this.notifyCharacteristicsUpdate(recovered);
     }
   }
 
