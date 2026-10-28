@@ -1,7 +1,7 @@
 {
   "displayName": "Playstation",
   "name": "@bogderp/homebridge-playstation",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "description": "Playstation integration for Homebridge (fork of kopiro/homebridge-playstation with rest mode, log spam and crash fixes)",
   "license": "ISC",
   "repository": {
