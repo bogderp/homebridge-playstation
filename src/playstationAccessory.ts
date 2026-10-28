@@ -7,6 +7,7 @@ import {
   Service,
 } from "homebridge";
 import { Device } from "playactor/dist/device";
+import { ConnectionIntent } from "playactor/dist/device/model";
 import {
   DeviceStatus,
   IDiscoveredDevice,
@@ -26,6 +27,10 @@ export class PlaystationAccessory {
     this.platform.Characteristic;
 
   private lockUpdate = false;
+  private pollInFlight = false;
+
+  // undefined until the first poll, so the first result is not reported as a change
+  private reachable: boolean | undefined;
   private lockSetOn = false;
 
   private tick: NodeJS.Timeout | undefined;
@@ -175,22 +180,45 @@ export class PlaystationAccessory {
     this.log.debug(`Device status updated to:`, this.deviceInformation.status);
   }
 
-  private async updateDeviceInformations(force = false) {
-    if (this.lockUpdate && !force) {
+  private async updateDeviceInformations() {
+    // pollInFlight is separate from lockUpdate: setOn releasing its locks
+    // must not let a second poll start while one is still running
+    if (this.pollInFlight || this.lockUpdate) {
       return;
     }
 
-    this.lockUpdate = true;
+    this.pollInFlight = true;
 
     try {
       await this.discoverDevice();
+      this.setReachable(true);
     } catch (err) {
-      this.log.error((err as Error).message);
+      this.setReachable(false, err as Error);
       // If we can't discover the device, it's probably OFF
       this.deviceInformation.status = DeviceStatus.STANDBY;
     } finally {
-      this.lockUpdate = false;
+      this.pollInFlight = false;
       this.notifyCharacteristicsUpdate();
+    }
+  }
+
+  private setReachable(reachable: boolean, err?: Error) {
+    const previous = this.reachable;
+    this.reachable = reachable;
+
+    if (previous === reachable) {
+      if (err) {
+        this.log.debug(err.message);
+      }
+      return;
+    }
+
+    if (!reachable) {
+      this.log.warn(
+        `Console is not reachable, it is probably powered off or disconnected from the network (${err?.message}). Logging this again only once it is back.`
+      );
+    } else if (previous === false) {
+      this.log.info(`Console is reachable again`);
     }
   }
 
@@ -216,7 +244,7 @@ export class PlaystationAccessory {
 
     if (this.lockSetOn) {
       this.log.info(
-        `Lock is active, ignoring request.\nYou're experiencing this because the previous operation is still in progress, or, less likely because the cleanup of the previous connection failed.\nThis is a Playstation and RemotePlay limitation, as opening/closing connection can take up to 20 seconds, after which the lock will be released anyway.\nTry to use the plugin as normal without hammering the switch button on/off, don't fall in the trap of the Heisenbug.`
+        `Previous request is still in progress (this can take up to ${this.kLockTimeout / 1000}s), ignoring this one`
       );
       throw new this.api.hap.HapStatusError(
         this.api.hap.HAPStatus.RESOURCE_BUSY
@@ -241,7 +269,11 @@ export class PlaystationAccessory {
         }
 
         this.log.debug(`Opening connection...`);
-        const connection = await device.openConnection();
+        // a STANDBY connection skips the Remote Play login, which recent
+        // PS5 firmware often never answers
+        const connection = await device.openConnection({
+          intent: value ? ConnectionIntent.LOGIN : ConnectionIntent.STANDBY,
+        });
 
         if (value) {
           this.log.debug(`Waking device...`);
@@ -280,7 +312,7 @@ export class PlaystationAccessory {
 
     if (this.lockSetOn) {
       this.log.info(
-        `Lock is active, ignoring request.\nYou're experiencing this because the previous operation is still in progress, or, less likely because the cleanup of the previous connection failed.\nThis is a Playstation and RemotePlay limitation, as opening/closing connection can take up to 20 seconds, after which the lock will be released anyway.\nTry to use the plugin as normal without hammering the switch button on/off, don't fall in the trap of the Heisenbug.`
+        `Previous request is still in progress (this can take up to ${this.kLockTimeout / 1000}s), ignoring this one`
       );
       throw new this.api.hap.HapStatusError(
         this.api.hap.HAPStatus.RESOURCE_BUSY
@@ -301,7 +333,9 @@ export class PlaystationAccessory {
         }
 
         this.log.debug(`Starting title ${requestedTitle} ...`);
-        const connection = await device.openConnection();
+        const connection = await device.openConnection({
+          intent: ConnectionIntent.START_TITLE,
+        });
 
         await connection.startTitleId?.(requestedTitle);
 

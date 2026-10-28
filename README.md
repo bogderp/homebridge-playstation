@@ -4,6 +4,18 @@
 
 _Hey Siri, turn on Playstation_ finally possible!
 
+> **Fork notice:** this is `@bogderp/homebridge-playstation`, a fork of
+> [kopiro/homebridge-playstation](https://github.com/kopiro/homebridge-playstation).
+> It uses [`@bogderp/playactor`](https://github.com/bogderp/playactor) and fixes:
+> PS5 rest mode from HomeKit, the `MaxListenersExceededWarning` leak, a crash
+> when a Remote Play request fails, and repeated "Unable to locate device"
+> log lines while the console is offline. The platform name is still
+> `playstation`, so existing configs and credentials keep working.
+>
+> If your console stops responding in rest mode, check that its switch port
+> auto-negotiates link speed: consoles drop to 100 Mbps in rest mode, so a
+> port forced to 1 Gbps loses the link.
+
 [![verified-by-homebridge](https://badgen.net/badge/homebridge/verified/purple)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
 ![IMG_2114](https://user-images.githubusercontent.com/839700/153052274-c406ef19-e9f4-41b0-bb66-78134069021d.jpg)
@@ -17,7 +29,7 @@ Most of the work is done by the amazing [playactor](https://github.com/dhleong/p
 You can install it via Homebridge UI or manually using:
 
 ```bash
-npm -g install homebridge-playstation
+npm -g install @bogderp/homebridge-playstation
 ```
 
 ## Configuration
