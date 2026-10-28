@@ -166,9 +166,15 @@ export class PlaystationAccessory {
   }
 
   private notifyCharacteristicsUpdate() {
+    // an unreachable console shows as "Not responding" in the Home app
+    // rather than "Off"
     this.tvService
       .getCharacteristic(this.platform.Characteristic.Active)
-      .updateValue(this.deviceInformation.status === DeviceStatus.AWAKE);
+      .updateValue(
+        this.reachable === false
+          ? this.communicationFailure()
+          : this.deviceInformation.status === DeviceStatus.AWAKE
+      );
 
     const runningAppTitle = this.titleIDs.indexOf(
       this.deviceInformation.extras["running-app-titleid"] || 0
@@ -293,11 +299,22 @@ export class PlaystationAccessory {
       })
       .finally(() => {
         this.releaseLocks();
+        // refresh now instead of waiting for the next poll
+        this.updateDeviceInformations();
       });
   }
 
   private async getOn(): Promise<CharacteristicValue> {
+    if (this.reachable === false) {
+      throw this.communicationFailure();
+    }
     return this.deviceInformation.status === DeviceStatus.AWAKE;
+  }
+
+  private communicationFailure() {
+    return new this.api.hap.HapStatusError(
+      this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE
+    );
   }
 
   private async setTitleSwitchState(value: CharacteristicValue) {
