@@ -10,8 +10,11 @@ import { Device } from "playactor/dist/device";
 import { ConnectionIntent } from "playactor/dist/device/model";
 import {
   DeviceStatus,
+  DeviceType,
   IDiscoveredDevice,
 } from "playactor/dist/discovery/model";
+import { RemoteOperation } from "playactor/dist/socket/remote";
+import { KeyPress } from "playactor/dist/socket/proc/remote-control";
 
 import { PlaystationPlatform } from "./playstationPlatform";
 import { PLUGIN_NAME } from "./settings";
@@ -37,6 +40,11 @@ export class PlaystationAccessory {
 
   private lockTimeout: NodeJS.Timeout | undefined;
   private readonly kLockTimeout = 20_000;
+
+  // keys pressed while a previous batch is still being sent
+  private pendingKeys: KeyPress[] = [];
+  private sendingKeys = false;
+  private remoteUnsupportedLogged = false;
 
   // list of titles that can be started through Home app
   private titleIDs: unknown[] = [];
@@ -87,12 +95,9 @@ export class PlaystationAccessory {
       .onSet(this.setOn.bind(this))
       .onGet(this.getOn.bind(this));
 
-    // These characteristics are required but not implemented yet
     this.tvService
       .getCharacteristic(this.Characteristic.RemoteKey)
-      .onSet((newValue: CharacteristicValue) => {
-        this.log.debug(`Set RemoteKey is not implemented yet`, newValue);
-      });
+      .onSet(this.setRemoteKey.bind(this));
 
     this.tvService.setCharacteristic(this.Characteristic.ActiveIdentifier, 0);
 
@@ -325,6 +330,114 @@ export class PlaystationAccessory {
     return new this.api.hap.HapStatusError(
       this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE
     );
+  }
+
+  private toRemoteOperation(
+    value: CharacteristicValue
+  ): RemoteOperation | undefined {
+    const { RemoteKey } = this.Characteristic;
+    switch (value) {
+      case RemoteKey.ARROW_UP:
+        return RemoteOperation.Up;
+      case RemoteKey.ARROW_DOWN:
+        return RemoteOperation.Down;
+      case RemoteKey.ARROW_LEFT:
+        return RemoteOperation.Left;
+      case RemoteKey.ARROW_RIGHT:
+        return RemoteOperation.Right;
+      case RemoteKey.SELECT:
+        return RemoteOperation.Enter;
+      case RemoteKey.BACK:
+        return RemoteOperation.Back;
+      case RemoteKey.INFORMATION:
+        return RemoteOperation.Option;
+      case RemoteKey.EXIT:
+        return RemoteOperation.PS;
+      default:
+        return undefined;
+    }
+  }
+
+  private logRemoteUnsupported(reason: string) {
+    if (this.remoteUnsupportedLogged) {
+      this.log.debug(`Remote key ignored: ${reason}`);
+      return;
+    }
+    this.remoteUnsupportedLogged = true;
+    this.log.info(`The iPhone remote is not supported: ${reason}`);
+  }
+
+  private setRemoteKey(value: CharacteristicValue) {
+    this.log.debug(`setRemoteKey:`, value);
+
+    // playactor can only send keys over the PS4 second screen connection,
+    // the PS5 Remote Play connection has no remote control
+    if (this.deviceInformation.type === DeviceType.PS5) {
+      this.logRemoteUnsupported(
+        "the PS5 only accepts remote keys inside a Remote Play stream"
+      );
+      return;
+    }
+
+    const key = this.toRemoteOperation(value);
+    if (key === undefined) {
+      this.log.debug(`No PlayStation button for remote key:`, value);
+      return;
+    }
+
+    // opening a connection wakes the console, so only send to an awake one
+    if (this.deviceInformation.status !== DeviceStatus.AWAKE) {
+      this.log.debug(`Console is not awake, ignoring remote key`);
+      return;
+    }
+
+    if (this.lockSetOn) {
+      this.log.debug(
+        `Previous request is still in progress, ignoring remote key`
+      );
+      return;
+    }
+
+    this.pendingKeys.push({ key });
+    this.sendPendingKeys();
+  }
+
+  private async sendPendingKeys() {
+    if (this.sendingKeys) {
+      return;
+    }
+
+    this.sendingKeys = true;
+
+    try {
+      // each connection takes a couple of seconds to open, so keys pressed
+      // meanwhile are sent together on the next one
+      while (this.pendingKeys.length > 0) {
+        const keys = this.pendingKeys.splice(0);
+        const device = await this.discoverDevice();
+        const connection = await device.openConnection();
+
+        try {
+          if (!connection.sendKeys) {
+            this.pendingKeys = [];
+            this.logRemoteUnsupported(
+              "the console is logged in with Remote Play credentials, which have no remote control"
+            );
+            return;
+          }
+
+          this.log.debug(`Sending remote keys:`, keys);
+          await connection.sendKeys(keys);
+        } finally {
+          await connection.close();
+        }
+      }
+    } catch (err) {
+      this.pendingKeys = [];
+      this.log.error((err as Error).message);
+    } finally {
+      this.sendingKeys = false;
+    }
   }
 
   private async setTitleSwitchState(value: CharacteristicValue) {
