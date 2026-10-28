@@ -1,56 +1,56 @@
-name: Release package
+name: Publish
 
+# Publishes when a merge to fixes carries a package.json version that is not on
+# npm yet, so a release is just a PR that bumps the version.
 on:
   push:
-    branches:
-      - master
+    branches: [fixes]
+  workflow_dispatch:
 
-# A release writes its version commit and tag back to master. Keeping one release
-# in flight prevents two closely spaced merges from choosing the same npm version.
 concurrency:
-  group: release-master
+  group: publish
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  id-token: write
+  contents: write # create the GitHub release and tag
+  id-token: write # npm trusted publishing (OIDC), no npm token needed
 
 jobs:
-  release:
-    # Commits pushed with GITHUB_TOKEN do not normally start another workflow,
-    # but the explicit guard protects the invariant if GitHub changes that rule.
-    if: github.actor != 'github-actions[bot]'
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: master
+
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+
+      # trusted publishing needs npm 11.5.1 or newer
+      - run: npm install -g npm@^11.5.1
+
       - run: npm ci
 
-      - name: Create patch version
-        id: version
+      - name: Check whether this version is already published
+        id: check
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # The release commit remains in the repository so package.json, the npm
-          # artifact, the Git tag, and the GitHub Release always describe one version.
-          npm version patch -m "chore: release v%s [skip ci]"
-          echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Push version commit and tag
-        run: git push origin HEAD:master --follow-tags
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already on npm, nothing to publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish to npm
+        if: steps.check.outputs.publish == 'true'
         run: npm publish
 
-      - name: Create GitHub Release
+      - name: Create GitHub release
+        if: steps.check.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: gh release create "$RELEASE_TAG" --verify-tag --generate-notes --title "$RELEASE_TAG"
+          TAG: ${{ steps.check.outputs.tag }}
+        run: gh release create "$TAG" --target "$GITHUB_SHA" --generate-notes --title "$TAG"
