@@ -1,10 +1,10 @@
 name: Publish
 
-# Publishes when a merge to fixes carries a package.json version that is not on
+# Publishes when a merge to main carries a package.json version that is not on
 # npm yet, so a release is just a PR that bumps the version.
 on:
   push:
-    branches: [fixes]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
