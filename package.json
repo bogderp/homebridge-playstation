@@ -37,13 +37,13 @@
     "prepublishOnly": "npm run lint && npm run build"
   },
   "bin": {
-    "homebridge-playstation-login": "./dist/cli.js"
+    "homebridge-playstation-login": "dist/cli.js"
   },
   "keywords": [
     "homebridge-plugin"
   ],
   "dependencies": {
-    "playactor": "file:../playactor/bogderp-playactor-0.5.0.tgz"
+    "playactor": "npm:@bogderp/playactor@^0.5.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
