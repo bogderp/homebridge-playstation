@@ -2,13 +2,22 @@
 
 import { DeviceOptions } from "playactor/dist/cli/options";
 import { Discovery } from "playactor/dist/discovery";
+import { userInfo } from "os";
 import readline from "readline";
+import { DiskCredentialsStorage } from "playactor/dist/credentials/disk-storage";
+
+// --credentials <path>: where to save the login (must match the plugin's
+// credentialsPath setting, if set)
+const credentialsArg = process.argv.indexOf("--credentials");
+const credentialsPath =
+  credentialsArg === -1 ? undefined : process.argv[credentialsArg + 1];
 
 const connect = async (deviceId) => {
   try {
     const opt = new DeviceOptions();
     opt.dontAutoOpenUrls = true;
     opt.deviceHostId = deviceId;
+    opt.credentialsPath = credentialsPath;
 
     console.log(`Connecting to <${deviceId}>...`);
 
@@ -59,6 +68,16 @@ const discover = async () => {
 
   return success;
 };
+
+if (credentialsArg !== -1 && !credentialsPath) {
+  console.error("Usage: homebridge-playstation-login [--credentials <path>]");
+  process.exit(1);
+}
+
+const storage = new DiskCredentialsStorage(credentialsPath);
+console.log(
+  `Logging in as user "${userInfo().username}"; credentials go to ${storage.filePath}`
+);
 
 discover()
   .then((success) => {
