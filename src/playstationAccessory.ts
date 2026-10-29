@@ -6,6 +6,8 @@ import {
   PlatformAccessory,
   Service,
 } from "homebridge";
+import { DiskCredentialsStorage } from "playactor/dist/credentials/disk-storage";
+import { isRemotePlay } from "playactor/dist/credentials/model";
 import { Device } from "playactor/dist/device";
 import { ConnectionIntent } from "playactor/dist/device/model";
 import {
@@ -15,6 +17,7 @@ import {
 } from "playactor/dist/discovery/model";
 import { RemoteOperation } from "playactor/dist/socket/remote";
 import { KeyPress } from "playactor/dist/socket/proc/remote-control";
+import { StreamButton, StreamRemote } from "playactor/dist/remoteplay/stream";
 
 import { PlaystationPlatform } from "./playstationPlatform";
 import { PLUGIN_NAME } from "./settings";
@@ -45,6 +48,12 @@ export class PlaystationAccessory {
   private pendingKeys: KeyPress[] = [];
   private sendingKeys = false;
   private remoteUnsupportedLogged = false;
+
+  // the PS5 takes keys over a Remote Play stream that stays open between
+  // presses; the address it was opened for, to notice the console moving
+  private streamRemote: Promise<StreamRemote | undefined> | undefined;
+  private streamRemoteAddress: string | undefined;
+  private readonly remoteIdleTimeoutMillis: number;
 
   // list of titles that can be started through Home app
   private titleIDs: unknown[] = [];
@@ -107,6 +116,11 @@ export class PlaystationAccessory {
       .getCharacteristic(this.Characteristic.ActiveIdentifier)
       .onSet(this.setTitleSwitchState.bind(this));
 
+    this.remoteIdleTimeoutMillis = this.getRemoteIdleTimeoutMillis();
+    this.api.on("shutdown", () => {
+      this.closeStreamRemote();
+    });
+
     this.tick = setInterval(
       this.updateDeviceInformations.bind(this),
       this.platform.config.pollInterval || this.platform.kDefaultPollInterval
@@ -120,6 +134,21 @@ export class PlaystationAccessory {
     return overrides.find(
       (override) => override.deviceId === this.deviceInformation.id
     );
+  }
+
+  private getRemoteIdleTimeoutMillis() {
+    const seconds =
+      this.platform.config.remoteIdleTimeout ??
+      this.platform.kDefaultRemoteIdleTimeout;
+
+    if (!Number.isFinite(seconds) || seconds < 1 || seconds > 3600) {
+      this.log.warn(
+        `remoteIdleTimeout must be between 1 and 3600 seconds; using ${this.platform.kDefaultRemoteIdleTimeout}`
+      );
+      return this.platform.kDefaultRemoteIdleTimeout * 1000;
+    }
+
+    return seconds * 1000;
   }
 
   private setTitleList() {
@@ -358,6 +387,30 @@ export class PlaystationAccessory {
     }
   }
 
+  private toStreamButton(value: CharacteristicValue): StreamButton | undefined {
+    const { RemoteKey } = this.Characteristic;
+    switch (value) {
+      case RemoteKey.ARROW_UP:
+        return StreamButton.UP;
+      case RemoteKey.ARROW_DOWN:
+        return StreamButton.DOWN;
+      case RemoteKey.ARROW_LEFT:
+        return StreamButton.LEFT;
+      case RemoteKey.ARROW_RIGHT:
+        return StreamButton.RIGHT;
+      case RemoteKey.SELECT:
+        return StreamButton.CROSS;
+      case RemoteKey.BACK:
+        return StreamButton.CIRCLE;
+      case RemoteKey.INFORMATION:
+        return StreamButton.OPTIONS;
+      case RemoteKey.EXIT:
+        return StreamButton.PS;
+      default:
+        return undefined;
+    }
+  }
+
   private logRemoteUnsupported(reason: string) {
     if (this.remoteUnsupportedLogged) {
       this.log.debug(`Remote key ignored: ${reason}`);
@@ -370,22 +423,17 @@ export class PlaystationAccessory {
   private setRemoteKey(value: CharacteristicValue) {
     this.log.debug(`setRemoteKey:`, value);
 
-    // playactor can only send keys over the PS4 second screen connection,
-    // the PS5 Remote Play connection has no remote control
-    if (this.deviceInformation.type === DeviceType.PS5) {
-      this.logRemoteUnsupported(
-        "the PS5 only accepts remote keys inside a Remote Play stream"
-      );
-      return;
-    }
-
-    const key = this.toRemoteOperation(value);
+    const isPS5 = this.deviceInformation.type === DeviceType.PS5;
+    const key = isPS5
+      ? this.toStreamButton(value)
+      : this.toRemoteOperation(value);
     if (key === undefined) {
       this.log.debug(`No PlayStation button for remote key:`, value);
       return;
     }
 
-    // opening a connection wakes the console, so only send to an awake one
+    // opening a PS4 connection wakes the console, and a PS5 stream can't
+    // open in rest mode, so only send to an awake one
     if (this.deviceInformation.status !== DeviceStatus.AWAKE) {
       this.log.debug(`Console is not awake, ignoring remote key`);
       return;
@@ -398,8 +446,85 @@ export class PlaystationAccessory {
       return;
     }
 
-    this.pendingKeys.push({ key });
+    if (isPS5) {
+      this.sendStreamKey(key as StreamButton);
+      return;
+    }
+
+    this.pendingKeys.push({ key: key as RemoteOperation });
     this.sendPendingKeys();
+  }
+
+  private async sendStreamKey(button: StreamButton) {
+    try {
+      const remote = await this.getStreamRemote();
+      if (!remote) {
+        return;
+      }
+
+      this.log.debug(`Sending remote key:`, button);
+      await remote.tap(button);
+    } catch (err) {
+      this.log.error(`Remote key failed: ${(err as Error).message}`);
+    }
+  }
+
+  private getStreamRemote() {
+    const { address } = this.deviceInformation.address;
+    if (this.streamRemote && this.streamRemoteAddress !== address) {
+      this.log.debug(`Console moved to ${address}, reopening remote`);
+      this.closeStreamRemote();
+    }
+
+    if (!this.streamRemote) {
+      const opening = this.createStreamRemote();
+      this.streamRemote = opening;
+      this.streamRemoteAddress = address;
+
+      // try again on the next key, eg: after logging in
+      opening.then(
+        (remote) => {
+          if (!remote && this.streamRemote === opening) {
+            this.streamRemote = undefined;
+          }
+        },
+        () => {
+          if (this.streamRemote === opening) {
+            this.streamRemote = undefined;
+          }
+        }
+      );
+    }
+
+    return this.streamRemote;
+  }
+
+  private async createStreamRemote() {
+    // the stream needs the PS5 Remote Play credentials from the login
+    const storage = new DiskCredentialsStorage();
+    const creds = await storage.read(this.deviceInformation.id);
+    if (!creds || !isRemotePlay(creds)) {
+      this.logRemoteUnsupported(
+        `no PS5 Remote Play credentials for this console in ${storage.filePath}; run homebridge-playstation-login as the user Homebridge runs as`
+      );
+      return undefined;
+    }
+
+    return new StreamRemote(this.deviceInformation, {}, creds, {
+      idleTimeoutMillis: this.remoteIdleTimeoutMillis,
+    });
+  }
+
+  private closeStreamRemote() {
+    const remote = this.streamRemote;
+    this.streamRemote = undefined;
+    this.streamRemoteAddress = undefined;
+
+    remote
+      ?.then((r) => r?.close())
+      .catch((err) => {
+        this.log.debug(`Closing the remote failed:`, err);
+      });
   }
 
   private async sendPendingKeys() {

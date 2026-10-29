@@ -14,6 +14,7 @@ export interface PlaystationPlatformConfig extends PlatformConfig {
   pollInterval?: number;
   overrides?: Array<{ deviceId: string; name?: string }>;
   apps?: Array<{ id: string; name: string }>;
+  remoteIdleTimeout?: number;
 }
 
 export class PlaystationPlatform implements IndependentPlatformPlugin {
@@ -22,6 +23,7 @@ export class PlaystationPlatform implements IndependentPlatformPlugin {
     this.api.hap.Characteristic;
 
   public readonly kDefaultPollInterval = 15_000;
+  public readonly kDefaultRemoteIdleTimeout = 60;
 
   constructor(
     public readonly log: Logger,
