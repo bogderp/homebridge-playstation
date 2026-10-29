@@ -52,6 +52,18 @@ You can do this by using the Homebridge UI terminal or an SSH session and manual
 
 - At boot, you should see a message like `"Please add [PS5 XYZ] manually in Home app. Setup Code: 111-22-333"` in the  logs; open the Home app and add your PlayStation as an extra accessory using "Add Accessory" in the top-right menu
 
+## iPhone remote
+
+The Remote in Control Center can drive the console while it is on: arrows,
+select (Cross), back (Circle), info (Options) and exit (PS button). Keys are
+ignored while the console is in rest mode.
+
+- PS4: each batch of keys opens a short second screen connection.
+- PS5: keys go over a Remote Play session, so the console shows "connected"
+  when the first key opens it and "disconnected" when it closes. The session
+  stays open between keys and closes after `remoteIdleTimeout` seconds
+  without one (default 60). It needs the Remote Play login above.
+
 ## Troubleshooting
 
 If at some point you have any problem, you can try to reset the Homebridge accessory and re-pair it.
