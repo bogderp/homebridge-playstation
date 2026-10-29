@@ -43,7 +43,7 @@
     "homebridge-plugin"
   ],
   "dependencies": {
-    "playactor": "npm:@bogderp/playactor@^0.5.1"
+    "playactor": "git+https://github.com/bogderp/playactor.git#remoteplay-remote"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
