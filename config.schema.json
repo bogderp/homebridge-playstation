@@ -12,6 +12,12 @@
         "default": 5000,
         "description": "Determine how often should device information be fetched (in milliseconds)"
       },
+      "credentialsPath": {
+        "title": "Credentials File",
+        "type": "string",
+        "placeholder": "~/.config/playactor/credentials.json",
+        "description": "Optional. The file with the console logins made by homebridge-playstation-login. Defaults to .config/playactor/credentials.json in the home directory of the user Homebridge runs as. If you set it, log in with homebridge-playstation-login --credentials <same path>."
+      },
       "overrides": {
         "title": "Overrides for default values of the console",
         "type": "array",

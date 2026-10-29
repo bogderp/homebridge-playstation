@@ -48,7 +48,14 @@ You can do this by using the Homebridge UI terminal or an SSH session and manual
 
 - On your PlayStation go to "Settings" > "System" > "Remote Play" > "Link Device" and provide the PIN code.
 
-- Restart the HomeBridge instance
+- Restart the HomeBridge instance. If the plugin can't find a login for a
+  console, it logs a warning at startup naming the file it checked and the
+  user Homebridge runs as; run `homebridge-playstation-login` again as that
+  user.
+
+- Optional: to keep the logins somewhere else, set `credentialsPath` in the
+  plugin config and log in with
+  `homebridge-playstation-login --credentials <same path>`.
 
 - At boot, you should see a message like `"Please add [PS5 XYZ] manually in Home app. Setup Code: 111-22-333"` in the  logs; open the Home app and add your PlayStation as an extra accessory using "Add Accessory" in the top-right menu
 
@@ -58,4 +65,4 @@ If at some point you have any problem, you can try to reset the Homebridge acces
 
 To do so, go to Homebridge UI > "Settings" > "Unpair Bridges / Cameras / TVs / External Accessories" and delete the Playstation.
 
-To reset the credentials used by PlayActor, you need to manually remove the directory `/home/homebridge/.config/playactor`
+To reset the credentials used by PlayActor, remove `.config/playactor/credentials.json` in the home directory of the user Homebridge runs as (or the file set in `credentialsPath`)

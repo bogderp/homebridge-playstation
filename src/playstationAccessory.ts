@@ -6,12 +6,14 @@ import {
   PlatformAccessory,
   Service,
 } from "homebridge";
-import { Device } from "playactor/dist/device";
+import { CredentialManager } from "playactor/dist/credentials";
+import { PendingDevice } from "playactor/dist/device/pending";
 import { ConnectionIntent } from "playactor/dist/device/model";
 import {
   DeviceStatus,
   IDiscoveredDevice,
 } from "playactor/dist/discovery/model";
+import { StandardDiscoveryNetworkFactory } from "playactor/dist/discovery/standard";
 
 import { PlaystationPlatform } from "./playstationPlatform";
 import { PLUGIN_NAME } from "./settings";
@@ -160,7 +162,15 @@ export class PlaystationAccessory {
   private async discoverDevice() {
     // Wrapper to get the device and making sure you always call .discover() before using the device,
     // otherwise you will get an "Error: Unexpected discovery message"
-    const device = Device.withId(this.deviceInformation.id);
+    const { id } = this.deviceInformation;
+    const device = new PendingDevice(
+      `with id ${id}`,
+      (d) => d.id === id,
+      {},
+      {},
+      StandardDiscoveryNetworkFactory,
+      new CredentialManager(undefined, this.platform.credentialsStorage)
+    );
     this.deviceInformation = await device.discover();
     return device;
   }
