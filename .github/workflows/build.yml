@@ -3,7 +3,7 @@ name: Build and Lint
 on:
   pull_request:
   push:
-    branches: [fixes]
+    branches: [main]
 
 permissions:
   contents: read
